@@ -1,4 +1,5 @@
 import Data.Char
+import Text.XHtml (sub)
 
 -- a parser is a wrapper for a function that takes a string, a list of all the possibilities (as the grammar may be ambiguous) of: (i) the interpretation of the parsed portion and (ii) the remainder of the string
 newtype Parser a = Parser { parse :: String -> [(a,String)] }
@@ -201,22 +202,114 @@ expr = term `chainl1` addop
 data Expr = ENum Double | EPlu Expr Expr | EMinu Expr Expr | EMul Expr Expr | EDiv Expr Expr | EMinuU Expr
     deriving Show
 
+---------------
+-- Testare --
+---------------
+
+-- ghci> parse expr "2 + 3"
+-- ghci> parse expr "4.3 * 10.2"
+
 --2. Modificati parser-ul astfel incat el sa returneze expresie de tipul de mai sus Expr (tip de date abstract, inductiv, pentru expresii aritmetice)
 
 enum :: Parser Expr
 enum = ENum <$> number
 
+---------------
+-- Rezolvare --
+---------------
+
 eaddop :: Parser (Expr -> Expr -> Expr)
-eaddop = undefined
+eaddop = add <|> sub
+    where 
+        add = do
+            symbol "+"
+            return EPlu
+        sub = do
+            symbol "-"
+            return EMinu
+
+-- addop :: Parser (Double -> Double -> Double)
+-- addop = add <|> sub
+--   where add = do
+--                 symbol "+"
+--                 return (+)
+--         sub = do
+--                 symbol "-"
+--                 return (-)
+
+---------------
+-- Rezolvare --
+---------------
 
 emulop :: Parser (Expr -> Expr -> Expr)
-emulop = undefined
+emulop = mul <|> div
+    where 
+        mul = do
+            symbol "*"
+            return EMul
+        div = do
+            symbol "/"
+            return EDiv
+
+-- mulop :: Parser (Double -> Double -> Double)
+-- mulop = mul <|> div
+--   where mul = do
+--                 symbol "*"
+--                 return (*)
+--         div = do
+--                 symbol "/"
+--                 return (/)
+
+---------------
+-- Rezolvare --
+---------------
 
 efactor :: Parser Expr
-efactor = undefined
+efactor = negativeFactor <|> parensExpr <|> enum
+    where
+        negativeFactor = do
+            symbol "-"
+            EMinuU <$> efactor
+        parensExpr = do
+            symbol "("
+            x <- eexpr
+            symbol ")"
+            return x
+
+-- factor :: Parser Double
+-- factor = negativeFactor <|> parensExpr <|> number
+--   where
+--     negativeFactor = do
+--                         symbol "-"
+--                         negate <$> factor
+--     parensExpr = do
+--                     symbol "("
+--                     x <- expr
+--                     symbol ")"
+--                     return x
+
+---------------
+-- Rezolvare --
+---------------
 
 eterm :: Parser Expr
-eterm = undefined
+eterm = efactor `chainl1` emulop
+
+-- term :: Parser Double
+-- term = factor `chainl1` mulop
+
+---------------
+-- Rezolvare --
+---------------
 
 eexpr :: Parser Expr
-eexpr = undefined
+eexpr = eterm `chainl1` eaddop
+
+-- expr :: Parser Double
+-- expr = term `chainl1` addop
+
+-------------
+-- Testare --
+-------------
+
+-- ghci> parse eexpr "2 + 3 - 100"

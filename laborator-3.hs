@@ -1,7 +1,13 @@
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 import Data.Char
--- import Main (eaddop)
 
 newtype Parser a = Parser { parse :: String -> [(a,String)] }
+
+item :: Parser Char
+item = Parser (\cs -> case cs of
+                "" -> []
+                (c:cs) -> [(c,cs)])
 
 instance Monad Parser where
     return a = Parser (\cs -> [(a,cs)])
@@ -15,12 +21,7 @@ instance Applicative Parser where
         return (f va)    
 
 instance Functor Parser where              
-    fmap f ma = pure f <*> ma  
-
-item :: Parser Char
-item = Parser (\cs -> case cs of
-                "" -> []
-                (c:cs) -> [(c,cs)])
+    fmap f ma = pure f <*> ma   
   
 zero :: Parser a
 zero = Parser (const [])
@@ -73,11 +74,11 @@ token p = do
 symbol :: String -> Parser String
 symbol symb = token (string symb)
 
-data AExp = Nu Int | Qid String | PlusE AExp AExp | TimesE AExp AExp
+data AExp = Nu Int | Qid String | PlusE AExp AExp | TimesE AExp AExp | DivE AExp AExp
     deriving Show
     
 aexp :: Parser AExp
-aexp = plusexp <|> mulexp <|> npexp
+aexp = plusexp <|> mulexp <|> divexp <|> npexp
 
 npexp = parexp <|> qid <|> integer
 
@@ -126,12 +127,11 @@ qid = do
             return (Qid a)
 
 plusexp :: Parser AExp
-plusexp = 
-    do
-        p <- npexp
-        symbol "+"
-        q <- npexp
-        return (PlusE p q)
+plusexp = do
+            p <- npexp
+            symbol "+"
+            q <- npexp
+            return (PlusE p q)
 
 mulexp :: Parser AExp
 mulexp = do
@@ -139,6 +139,14 @@ mulexp = do
             symbol "*"
             q <- npexp
             return (TimesE p q)
+
+divexp :: Parser AExp
+divexp = do
+            p <- npexp
+            symbol "/"
+            q <- npexp
+            return (DivE p q)
+
 
 data BExp = BE Bool | LE AExp AExp | NotE BExp | AndE BExp BExp
     deriving Show
@@ -259,91 +267,153 @@ inf_cycle = "'n := 0; while (0 <= 0) {'n := 'n +1}"
 inf_cycle_p :: Stmt
 inf_cycle_p = (fst.head) (parse stmt inf_cycle)
 
----------------
--- Rezolvare --
----------------
-
 recall :: String -> [(String, Int)] -> Int
-recall variabila ((var, val) : lista) 
-    | variabila == var = val
-    | otherwise = recall variabila lista
-
--------------
--- Testare --
--------------
-
--- ghci> recall "aur" [("argint", 42), ("aur", 99), ("diamant", 23)]
-
----------------
--- Rezolvare --
----------------
+recall s ((t,v):xs) = if t == s then v else recall s xs
 
 update :: String -> Int -> [(String, Int)] -> [(String, Int)]
-update variabila valoare [] = [(variabila, valoare)]
-update variabila valoare ((var, val) : lista)
-    | variabila == var = (var, valoare) : lista
-    | otherwise = (var, val) : update variabila valoare lista
-
--------------
--- Testare --
--------------
-
--- ghci> update "aur" 100 [("argint", 42), ("aur", 99), ("diamant", 23)]
--- ghci> update "branza" 100 [("argint", 42), ("aur", 99), ("diamant", 23)]
-
----------------
--- Rezolvare --
----------------
+update s v [] = [(s,v)]
+update s v ((t,w):xs) = if t==s then ((s,v):xs) else ((t,w):(update s v xs))
 
 value :: AExp -> [(String, Int)] -> Int
 value (Nu n) _ = n
-value (Qid s) state = recall s state
-value (PlusE a0 a1) state =  value a0 state + value a1 state 
-value (TimesE a0 a1) state = value a0 state * value a1 state
-
--- data AExp = Nu Int | Qid String | PlusE AExp AExp | TimesE AExp AExp
---     deriving Shows
-
--------------
--- Testare --
--------------
-
--- ghci> value (Nu 7) []
-
----------------
--- Rezolvare --
----------------
+value (Qid t) s = recall t s
+value (PlusE e1 e2) s = (value e1 s) + (value e2 s)
+value (TimesE e1 e2) s = (value e1 s) * (value e2 s)
+value (DivE e1 e2) s = div (value e1 s) (value e2 s)
 
 valueb :: BExp -> [(String, Int)] -> Bool
-valueb (BE var) _ = var
-valueb (LE a0 a1) state = valueb a0 state <= valueb a1 state
-valueb (NotE b) state = not (valueb b state)
-valueb (AndE b0 b1) state = valueb b0 & valueb b1
-
--- data BExp = BE Bool | LE AExp AExp | NotE BExp | AndE BExp BExp
---     deriving Show
+valueb (BE b) _ = b
+valueb (LE e1 e2) s = (value e1 s) <= (value e2 s)
+valueb (NotE e) s = not (valueb e s)
+valueb (AndE e1 e2) s = (valueb e1 s) && (valueb e2 s)
 
 bssos :: Stmt -> [(String, Int)] -> [(String, Int)]
-bssos = undefined
+bssos Skip s = s
+bssos (AtrE t e) s = update t (value e s) s
+bssos (Seq s1 s2) s = bssos s2 (bssos s1 s)
+bssos (IfE be s1 s2) s = if (valueb be s) then (bssos s1 s) else (bssos s2 s)
+bssos (WhileE be s1) s = if (valueb be s) then (bssos (WhileE be s1) (bssos s1 s)) else s
 
-test_bssos = recall "s" (bssos sum_no_p []) == 5050
+--This is where the new stuff starts
 
-sssos1 :: (Stmt, [(String, Int)]) -> (Stmt, [(String, Int)])
-sssos1 = undefined
+factorial :: Integer -> Integer
+factorial n = if n==0 then 1 else n * (factorial (n-1))
 
-sssos_star :: (Stmt, [(String, Int)]) -> [(Stmt, [(String, Int)])]
-sssos_star (s1, s) = (s1, s):(sssos_plus (s1, s))
+fix :: (a -> a) -> a
+fix f = f (fix f)
 
-sssos_plus :: (Stmt, [(String, Int)]) -> [(Stmt, [(String, Int)])]
-sssos_plus (Skip, s) = []
-sssos_plus (s1, s) = (sssos_star . sssos1) (s1, s)
+factorialf :: Integer -> Integer
+factorialf = fix (\f n -> if n==0 then 1 else n * (f (n-1)))
 
-sssos_final_state :: (Stmt, [(String, Int)]) -> [(String, Int)]
-sssos_final_state = snd . last . sssos_star
+ackermannf :: Integer -> Integer -> Integer
+ackermannf = fix (undefined)
 
-test_sssos = recall "s" (sssos_final_state (sum_no_p, [])) == 5050
+data Peano = Zero | Succ Peano deriving Show
+
+evenp Zero = True
+evenp (Succ n) = oddp n
+oddp Zero = False
+oddp (Succ n) = evenp n
+
+evenoddf :: Peano -> (Bool, Bool)
+evenoddf = fix (undefined)
+
+testevenoddf = evenoddf (Succ (Succ (Succ Zero))) == (False, True)
+
+denot :: Stmt -> [(String, Int)] -> [(String, Int)]
+denot Skip = undefined
+denot (AtrE t e) = undefined
+denot (Seq s1 s2) = undefined
+denot (IfE be s1 s2) = undefined
+denot (WhileE be s1) = fix (undefined)
 
 prog = sum_no_p
-inits = (prog, [])
 
-test = (sssos_final_state inits) == (bssos prog [])
+test_denot = (bssos prog []) == (denot prog [])
+
+--Now general stuff starts
+
+type Algebra f a = f a -> a
+
+newtype Fix f = Fx (f (Fix f))
+-- :k Fix
+
+unFix :: Fix f -> f (Fix f)
+unFix (Fx x) = x
+
+catamorphism :: Functor f => (f a -> a) -> (Fix f -> a)
+catamorphism a = fix (\f -> a . (fmap f). unFix)
+-- this is the unique initial algebra morphism
+
+-- Now specific stuff for propositional logic
+
+data ExprBoolF a = Var String | Neg a | Implies a a deriving Show
+-- :k ExprBoolF
+
+instance Functor ExprBoolF where
+    fmap eval (Var v) = Var v
+    fmap eval (Neg phi) = Neg (eval phi)
+    fmap eval (Implies phi psi) = Implies (eval phi) (eval psi)
+
+type ExprBoolFix = Fix ExprBoolF
+-- :k ExprBoolFix
+
+instance Show ExprBoolFix where
+    show (Fx a) = "(Fx (" ++ show a ++ "))"
+
+sampleExpr :: ExprBoolFix
+sampleExpr = Fx (Implies (Fx (Var "a")) (Fx (Var "b")))
+
+type TargetBoolAlgebra = Algebra ExprBoolF ((String -> Bool) -> Bool)
+
+impl :: Bool -> Bool -> Bool
+impl a b = (not a) || b
+
+alg :: TargetBoolAlgebra
+alg (Var v) = ($ v)
+alg (Neg x) = not . x
+alg (Implies x y) = \e -> impl (x e) (y e)
+
+sampleEval :: String -> Bool
+sampleEval "a" = True
+sampleEval "b" = False
+
+test = catamorphism alg sampleExpr sampleEval == False
+
+-- Now specific stuff for IMP
+          
+data StmtF a = AtrEF String AExp | SeqF a a | IfEF BExp a a | WhileEF BExp a | SkipF deriving Show
+
+type StmtFix = Fix StmtF
+
+instance Show StmtFix where
+    show (Fx a) = "(Fx (" ++ show a ++ "))"
+
+instance Functor StmtF where
+    fmap eval SkipF = undefined
+    fmap eval (AtrEF t e) = undefined
+    fmap eval (SeqF s1 s2) = undefined
+    fmap eval (IfEF be s1 s2) = undefined
+    fmap eval (WhileEF be s1) = undefined
+
+type TargetStmtAlgebra = Algebra StmtF ([(String, Int)] -> [(String, Int)])
+
+algs :: TargetStmtAlgebra
+algs SkipF = undefined
+algs (AtrEF t e) = undefined
+algs (SeqF s1 s2) = undefined
+algs (IfEF be s1 s2) = undefined
+algs (WhileEF be s1) = fix (undefined)
+
+-- Here we do a hack
+convstmt :: Stmt -> StmtFix
+convstmt Skip = Fx SkipF
+convstmt (AtrE t e) = Fx (AtrEF t e)
+convstmt (Seq s1 s2) = Fx (SeqF (convstmt s1) (convstmt s2))
+convstmt (IfE be s1 s2) = Fx (IfEF be (convstmt s1) (convstmt s2))
+convstmt (WhileE be s1) = Fx (WhileEF be (convstmt s1))
+
+progf :: StmtFix
+progf = convstmt prog
+
+testf = catamorphism algs progf []
